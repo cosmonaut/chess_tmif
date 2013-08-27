@@ -21,6 +21,7 @@
 int init_output_ports(DM7820_Board_Descriptor *);
 int init_output_fifo(DM7820_Board_Descriptor *);
 int init_output_dma(DM7820_Board_Descriptor *);
+void clear_fifo_flags(DM7820_Board_Descriptor *);
 
 
 /* global loop control */
@@ -45,6 +46,17 @@ static void signal_handler(int sig) {
         //syslog(LOG_WARNING, "Caught signal (%d) %s", strsignal(sig));
         loop_switch = 0;
         break;
+    }
+}
+
+
+static void get_fifo_status(DM7820_Board_Descriptor *board,
+                            dm7820_fifo_queue fifo,
+                            dm7820_fifo_status_condition condition, uint8_t *status) {
+    if (DM7820_FIFO_Get_Status(board, fifo, condition, status) == -1) {
+        status = NULL;
+        //syslog(LOG_ERR, "ERROR: DM7820_FIFO_Get_Status() failed!");
+        printf("Get FIFO Status failed \n");
     }
 }
 
@@ -128,13 +140,14 @@ int main(void) {
         printf("Failed to set up DMA \n");
     }
     
-
     /* Enable FIFO 0 */
     dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0xFF);
     if (dm7820_status < 0) {
         printf("Failed to enable fifo \n");
     }
 
+    clear_fifo_flags(output_board);
+    
 
 
 
@@ -275,4 +288,30 @@ int init_output_dma(DM7820_Board_Descriptor *board) {
     //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Configure()");
 
     return 0;
+}
+
+void clear_fifo_flags(DM7820_Board_Descriptor *board) {
+    uint8_t fifo_status;
+
+    //syslog(LOG_INFO, "Clearing FIFO flags...");
+    //fprintf(stdout, "Clearing FIFO flags... \n");
+
+    //fprintf(stdout, "Clearing FIFO 0 status empty flag ...\n");
+    get_fifo_status(board, DM7820_FIFO_QUEUE_0, DM7820_FIFO_STATUS_EMPTY,
+                    &fifo_status);
+
+    /* Clear FIFO status full flag without checking its state */
+    //fprintf(stdout, "Clearing FIFO 0 status full flag ...\n");
+    get_fifo_status(board, DM7820_FIFO_QUEUE_0, DM7820_FIFO_STATUS_FULL,
+                    &fifo_status);
+
+    /* Clear FIFO status overflow flag without checking its state */
+    //fprintf(stdout, "Clearing FIFO 0 status overflow flag ...\n");
+    get_fifo_status(board, DM7820_FIFO_QUEUE_0, DM7820_FIFO_STATUS_OVERFLOW,
+                    &fifo_status);
+
+    /* Clear FIFO status underflow flag without checking its state */
+    //fprintf(stdout, "Clearing FIFO 0 status underflow flag ...\n");
+    get_fifo_status(board, DM7820_FIFO_QUEUE_0,
+                    DM7820_FIFO_STATUS_UNDERFLOW, &fifo_status);
 }
