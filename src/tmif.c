@@ -14,10 +14,13 @@
 
 
 #define CU40MMXS_PORT 60000
+#define DMA_BUF_SIZE 0xa000
+#define DMA_BUF_NUM 1
 
 
 int init_output_ports(DM7820_Board_Descriptor *);
 int init_output_fifo(DM7820_Board_Descriptor *);
+int init_output_dma(DM7820_Board_Descriptor *);
 
 
 /* global loop control */
@@ -120,6 +123,18 @@ int main(void) {
         printf("Failed to set fifo \n");
     }
 
+    dm7820_status = init_output_dma(output_board);
+    if (dm7820_status < 0) {
+        printf("Failed to set up DMA \n");
+    }
+    
+
+    /* Enable FIFO 0 */
+    dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0xFF);
+    if (dm7820_status < 0) {
+        printf("Failed to enable fifo \n");
+    }
+
 
 
 
@@ -152,7 +167,12 @@ int main(void) {
         usleep(50);
     }
 
-
+    /* Disable DMA on FIFO 0 */
+    dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
+                                           DM7820_FIFO_QUEUE_0, 0x00, 0x00);
+    if (dm7820_status < 0) {
+        printf("Failed to disble dma on fifo 0 \n");
+    }
     
     dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0x00);
     if (dm7820_status < 0) {
@@ -233,5 +253,26 @@ int init_output_fifo(DM7820_Board_Descriptor *board) {
                                                  0xFFFF,
                                                  DM7820_STDIO_PERIPH_FIFO_0);
     
+    return 0;
+}
+
+int init_output_dma(DM7820_Board_Descriptor *board) {
+    DM7820_Error dm7820_status;    
+
+    /*  Initializing DMA 0 */
+    //syslog(LOG_INFO, "Initializing DMA 0 ...");
+    dm7820_status = DM7820_FIFO_DMA_Initialize(board,
+                                               DM7820_FIFO_QUEUE_0,
+                                               DMA_BUF_NUM, DMA_BUF_SIZE);
+    //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Initialize()");
+
+    /*  Configuring DMA 0 */
+    //syslog(LOG_INFO, "    Configuring DMA 0 ...");
+    dm7820_status = DM7820_FIFO_DMA_Configure(board,
+                                              DM7820_FIFO_QUEUE_0,
+                                              DM7820_DMA_DEMAND_ON_PCI_TO_DM7820,
+                                              DMA_BUF_SIZE);
+    //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Configure()");
+
     return 0;
 }
