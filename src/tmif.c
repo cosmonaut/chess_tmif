@@ -16,6 +16,9 @@
 #define CU40MMXS_PORT 60000
 
 
+int init_output_ports(DM7820_Board_Descriptor *);
+
+
 /* global loop control */
 static volatile sig_atomic_t loop_switch = 1;
 
@@ -106,6 +109,14 @@ int main(void) {
         printf("Failed to reset board \n");
     }
 
+    dm7820_status = init_output_ports(output_board);
+    if (dm7820_status < 0) {
+        printf("Failed to set up ports \n");
+    }
+
+
+
+
     /* Allow graceful quit with various signals */
     memset(&sa_quit, 0, sizeof(sa_quit));
     sa_quit.sa_handler = &signal_handler;
@@ -150,6 +161,28 @@ int main(void) {
     close(sock_fd);
 
     printf("Good close\n");
+
+    return 0;
+}
+
+
+int init_output_ports(DM7820_Board_Descriptor *board) {
+    DM7820_Error dm7820_status;
+
+    /* Set all port 0 lines as perhipheral output */
+    dm7820_status =
+        DM7820_StdIO_Set_IO_Mode(board, DM7820_STDIO_PORT_0, 0xFFFF,
+                                 DM7820_STDIO_MODE_PER_OUT);
+    if (dm7820_status < 0) {
+        return -1;
+    }
+
+    /* Set all lines low */
+    dm7820_status =
+        DM7820_StdIO_Set_Output(board, DM7820_STDIO_PORT_0, 0x0000);
+    if (dm7820_status < 0) {
+        return -1;
+    }
 
     return 0;
 }
