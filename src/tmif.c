@@ -65,6 +65,7 @@ int main(void) {
     /* DM9820 items */
     DM7820_Error dm7820_status;
     DM7820_Board_Descriptor *output_board;
+    uint8_t fifo_status = 0x00;
 
     /* Socket items */
     int sock_fd;
@@ -147,7 +148,13 @@ int main(void) {
     }
 
     clear_fifo_flags(output_board);
-    
+
+    /* Output FIFOS should be empty */    
+    get_fifo_status(output_board, DM7820_FIFO_QUEUE_0, DM7820_FIFO_STATUS_EMPTY,
+                    &fifo_status);
+    if (!fifo_status) {
+        printf("FIFO 0 NOT empty! \n");
+    }
 
 
 
