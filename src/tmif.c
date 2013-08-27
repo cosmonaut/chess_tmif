@@ -17,6 +17,7 @@
 
 
 int init_output_ports(DM7820_Board_Descriptor *);
+int init_output_fifo(DM7820_Board_Descriptor *);
 
 
 /* global loop control */
@@ -114,6 +115,11 @@ int main(void) {
         printf("Failed to set up ports \n");
     }
 
+    dm7820_status = init_output_fifo(output_board);
+    if (dm7820_status < 0) {
+        printf("Failed to set fifo \n");
+    }
+
 
 
 
@@ -147,7 +153,11 @@ int main(void) {
     }
 
 
-
+    
+    dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0x00);
+    if (dm7820_status < 0) {
+        printf("Failed to disable fifo \n");
+    }
 
     /* Close down everything gracefully */
 
@@ -184,5 +194,44 @@ int init_output_ports(DM7820_Board_Descriptor *board) {
         return -1;
     }
 
+    return 0;
+}
+
+int init_output_fifo(DM7820_Board_Descriptor *board) {
+    DM7820_Error dm7820_status;    
+
+    /* Init Output FIFO */
+
+    /* FIFO 0 */
+    /* Disable FIFO 0 */
+    dm7820_status = DM7820_FIFO_Enable(board, DM7820_FIFO_QUEUE_0, 0x00);
+    
+    /* Set FIFO input clock to PCI write */
+    dm7820_status = DM7820_FIFO_Set_Input_Clock(board,
+                                                DM7820_FIFO_QUEUE_0,
+                                                DM7820_FIFO_INPUT_CLOCK_PCI_WRITE);
+    
+    
+    /* Set FIFO 0 output clock to strobe 1 (wallops strobe) */
+    dm7820_status = DM7820_FIFO_Set_Output_Clock(board,
+                                                 DM7820_FIFO_QUEUE_0,
+                                                 DM7820_FIFO_OUTPUT_CLOCK_STROBE_1);
+
+    /* Set FIFO 0 data input to PCI data */
+    dm7820_status = DM7820_FIFO_Set_Data_Input(board,
+                                               DM7820_FIFO_QUEUE_0,
+                                               DM7820_FIFO_0_DATA_INPUT_PCI_DATA);
+
+    dm7820_status = DM7820_FIFO_Set_DMA_Request(board,
+                                                DM7820_FIFO_QUEUE_0,
+                                                DM7820_FIFO_DMA_REQUEST_WRITE);
+
+    /* Set the FIFO 0 output to port 0 */
+    /* The mask is 0xFFFF for a full 16 bit word */
+    dm7820_status = DM7820_StdIO_Set_Periph_Mode(board,
+                                                 DM7820_STDIO_PORT_0,
+                                                 0xFFFF,
+                                                 DM7820_STDIO_PERIPH_FIFO_0);
+    
     return 0;
 }
