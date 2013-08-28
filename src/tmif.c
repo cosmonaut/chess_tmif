@@ -14,8 +14,13 @@
 
 
 #define CU40MMXS_PORT 60000
-#define DMA_BUF_SIZE 0xa000
-#define DMA_BUF_NUM 1
+//#define DMA_BUF_SIZE 0xa000
+#define DMA_BUF_SIZE 65536
+#define DMA_BUF_NUM 8
+/* Size of total DMA buffer in bytes */
+#define DMA_USR_BUF_SIZE (DMA_BUF_SIZE * DMA_BUF_NUM)
+/* Number of 16-bit samples in the DMA buffer */
+#define DMA_NSAMPLES ( DMA_USR_BUF_SIZE / 2 )
 
 
 int init_output_ports(DM7820_Board_Descriptor *);
@@ -66,6 +71,8 @@ int main(void) {
     DM7820_Error dm7820_status;
     DM7820_Board_Descriptor *output_board;
     uint8_t fifo_status = 0x00;
+    /* DMA buffer */
+    uint16_t *dma_buf = NULL;
 
     /* Socket items */
     int sock_fd;
@@ -147,6 +154,14 @@ int main(void) {
         printf("Failed to enable fifo \n");
     }
 
+    /* Set strobe 2 as input */
+    dm7820_status = DM7820_StdIO_Strobe_Mode(output_board,
+                                             DM7820_STDIO_STROBE_2,
+                                             0x00);
+    if (dm7820_status < 0) {
+        printf("Failed to set strobe to input \n");
+    }
+
     clear_fifo_flags(output_board);
 
     /* Output FIFOS should be empty */    
@@ -156,6 +171,15 @@ int main(void) {
         printf("FIFO 0 NOT empty! \n");
     }
 
+    printf("DMA SIZE: %i \n", DMA_USR_BUF_SIZE);
+    printf("DMA SAMPLES SIZE: %i \n", DMA_NSAMPLES);
+    /* Create DMA buffers */
+    dm7820_status =
+        DM7820_FIFO_DMA_Create_Buffer(&dma_buf, DMA_USR_BUF_SIZE);
+    if (dm7820_status < 0) {
+        printf("Failed to create DMA buffer \n");
+        perror("DMA BUF: ");
+    }
 
 
     /* Allow graceful quit with various signals */
@@ -192,6 +216,13 @@ int main(void) {
                                            DM7820_FIFO_QUEUE_0, 0x00, 0x00);
     if (dm7820_status < 0) {
         printf("Failed to disble dma on fifo 0 \n");
+    }
+    
+    /* Free DMA buffer */
+    dm7820_status =
+        DM7820_FIFO_DMA_Free_Buffer(&dma_buf, DMA_USR_BUF_SIZE);
+    if (dm7820_status < 0) {
+        printf("Error freeing DMA buffer \n");
     }
     
     dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0x00);
@@ -255,7 +286,7 @@ int init_output_fifo(DM7820_Board_Descriptor *board) {
     /* Set FIFO 0 output clock to strobe 1 (wallops strobe) */
     dm7820_status = DM7820_FIFO_Set_Output_Clock(board,
                                                  DM7820_FIFO_QUEUE_0,
-                                                 DM7820_FIFO_OUTPUT_CLOCK_STROBE_1);
+                                                 DM7820_FIFO_OUTPUT_CLOCK_STROBE_2);
 
     /* Set FIFO 0 data input to PCI data */
     dm7820_status = DM7820_FIFO_Set_Data_Input(board,
