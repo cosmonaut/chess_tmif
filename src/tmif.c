@@ -195,7 +195,12 @@ int main(void) {
     /* this is the magic. */
     while(loop_switch) {
     
-        sock_nbytes = recvfrom(sock_fd, packet_buf, sizeof(packet_buf), 0, (struct sockaddr *)&from_addr, &addr_len);
+        sock_nbytes = recvfrom(sock_fd, 
+                               packet_buf, 
+                               sizeof(packet_buf), 
+                               0, 
+                               (struct sockaddr *)&from_addr, 
+                               &addr_len);
         //printf("sock bytes: %i\n", sock_nbytes);
         //perror("socket!");
         if (sock_nbytes > 0) {
