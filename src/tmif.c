@@ -91,6 +91,8 @@ int main(void) {
     /* Signals */
     struct sigaction sa_quit;
 
+    uint16_t packet_counter = 0;
+    uint32_t pkt_mismatch_cnt = 0;
 
     printf("Hello!\n");
 
@@ -195,25 +197,42 @@ int main(void) {
     /* this is the magic. */
     while(loop_switch) {
     
-        sock_nbytes = recvfrom(sock_fd, 
-                               packet_buf, 
-                               sizeof(packet_buf), 
-                               0, 
-                               (struct sockaddr *)&from_addr, 
-                               &addr_len);
-        //printf("sock bytes: %i\n", sock_nbytes);
-        //perror("socket!");
-        if (sock_nbytes > 0) {
-            printf("sock bytes: %i\n", sock_nbytes);
-            printf("Num photons: %u\n", packet_buf[0]);
-            printf("Packet Count: %u\n", packet_buf[1]);
-            printf("got packet from: %s\n\n", inet_ntop(from_addr.ss_family, 
-                                                    &(((struct sockaddr_in*)((struct sockaddr *)&from_addr))->sin_addr), 
-                                                    s, 
-                                                    sizeof(s)));
-        }
+        while(1) {
+            sock_nbytes = recvfrom(sock_fd, 
+                                   packet_buf, 
+                                   sizeof(packet_buf), 
+                                   0, 
+                                   (struct sockaddr *)&from_addr, 
+                                   &addr_len);
+            
+            if (sock_nbytes > 0) {
+                printf("sock bytes: %i\n", sock_nbytes);
+                printf("Num photons: %u\n", packet_buf[0]);
+                printf("Packet Count: %u\n", packet_buf[1]);
+                printf("got packet from: %s\n\n", inet_ntop(from_addr.ss_family, 
+                                                            &(((struct sockaddr_in*)((struct sockaddr *)&from_addr))->sin_addr), 
+                                                            s, 
+                                                            sizeof(s)));
 
-        usleep(50);
+                if ((packet_counter + 1) != packet_buf[1]) {
+                    printf("PACKET COUNTER MISMATCH! \n");
+                    printf("pc+1: %u\n", (packet_counter + 1));
+                    printf("pack: %u\n", (packet_buf[1]));
+                    pkt_mismatch_cnt++;
+                }
+                packet_counter = packet_buf[1];
+
+                if (packet_buf[0] > 0) {
+                    printf("num photons %u\n", packet_buf[0]);
+                }
+            } else {
+                break;
+            }
+        }
+        
+
+
+        usleep(10);
     }
 
     /* Disable DMA on FIFO 0 */
@@ -247,6 +266,7 @@ int main(void) {
     close(sock_fd);
 
     printf("Good close\n");
+    printf("Total packet mismatch: %u\n", pkt_mismatch_cnt);
 
     return 0;
 }
