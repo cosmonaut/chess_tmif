@@ -193,6 +193,7 @@ int main(void) {
     sigaction(SIGINT, &sa_quit, NULL);
     sigaction(SIGQUIT, &sa_quit, NULL);
 
+    addr_len = sizeof(from_addr);
 
     /* this is the magic. */
     while(loop_switch) {
