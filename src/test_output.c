@@ -12,12 +12,12 @@
 #include <fcntl.h>
 #include <signal.h>
 
-#include "tmif_hdf5.h"
 
 #define CU40MMXS_PORT 60000
 //#define DMA_BUF_SIZE 0xa000
-#define DMA_BUF_SIZE 65536
-#define DMA_BUF_NUM 8
+//#define DMA_BUF_SIZE 65536
+#define DMA_BUF_SIZE 8192
+#define DMA_BUF_NUM 16
 /* Size of total DMA buffer in bytes */
 #define DMA_USR_BUF_SIZE (DMA_BUF_SIZE * DMA_BUF_NUM)
 /* Number of 16-bit samples in the DMA buffer */
@@ -76,19 +76,18 @@ int main(void) {
     uint16_t *dma_buf = NULL;
 
     /* Socket items */
-    int sock_fd;
-    int sock_status = 0;
-    struct sockaddr_in sin;
-    int sock_opts = 0;
-    struct sockaddr_storage from_addr;
-    socklen_t addr_len;
+    // int sock_fd;
+    // int sock_status = 0;
+    // struct sockaddr_in sin;
+    // int sock_opts = 0;
+    // struct sockaddr_storage from_addr;
+    // socklen_t addr_len;
 
-    int sock_nbytes = 0;
+    // int sock_nbytes = 0;
 
     /* buffers */
-    uint16_t packet_buf[735];
+    //uint16_t packet_buf[2048];
     char s[100];
-    uint16_t *pbufptr = packet_buf;
 
     /* Signals */
     struct sigaction sa_quit;
@@ -98,33 +97,35 @@ int main(void) {
     uint16_t num_photons = 0;
     uint32_t pkt_mismatch_cnt = 0;
 
+    uint32_t j = 0;
+
     printf("Hello!\n");
-    memset(packet_buf, 0, sizeof(uint16_t)*735);
 
 
-    /* Create socket */
-    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock_fd < 0) {
-        printf("Error creating socket...\n");
-    }
 
-    /* Bind to port 60000 */
-    memset(&sin, 0, sizeof(sin));
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = INADDR_ANY;
-    sin.sin_port = htons(CU40MMXS_PORT);
+    // /* Create socket */
+    // sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    // if (sock_fd < 0) {
+    //     printf("Error creating socket...\n");
+    // }
 
-    sock_status = bind(sock_fd, (struct sockaddr *)&sin, sizeof(sin));
-    if (sock_status < 0) {
-        printf("Failed to bind\n");
-    }
+    // /* Bind to port 60000 */
+    // memset(&sin, 0, sizeof(sin));
+    // sin.sin_family = AF_INET;
+    // sin.sin_addr.s_addr = INADDR_ANY;
+    // sin.sin_port = htons(CU40MMXS_PORT);
 
-    /* Set non-blocking socket */
-    sock_opts = fcntl(sock_fd, F_GETFL);
-    sock_opts = fcntl(sock_fd, F_SETFL, (sock_opts | O_NONBLOCK));
-    if (sock_opts == -1) {
-        printf("Failed to set socket as non-blocking\n");
-    }
+    // sock_status = bind(sock_fd, (struct sockaddr *)&sin, sizeof(sin));
+    // if (sock_status < 0) {
+    //     printf("Failed to bind\n");
+    // }
+
+    // /* Set non-blocking socket */
+    // sock_opts = fcntl(sock_fd, F_GETFL);
+    // sock_opts = fcntl(sock_fd, F_SETFL, (sock_opts | O_NONBLOCK));
+    // if (sock_opts == -1) {
+    //     printf("Failed to set socket as non-blocking\n");
+    // }
 
 
     /* Init DM9820 board */
@@ -197,69 +198,62 @@ int main(void) {
     sigaction(SIGINT, &sa_quit, NULL);
     sigaction(SIGQUIT, &sa_quit, NULL);
 
-    addr_len = sizeof(from_addr);
+    //addr_len = sizeof(from_addr);
+    printf("memset?\n");
+    memset(dma_buf, 0, DMA_USR_BUF_SIZE);
+    printf("entering loop...\n");
 
     /* this is the magic. */
     while(loop_switch) {
     
-        while(1) {
-            sock_nbytes = recvfrom(sock_fd, 
-                                   packet_buf, 
-                                   sizeof(packet_buf), 
-                                   0, 
-                                   (struct sockaddr *)&from_addr, 
-                                   &addr_len);
-	    //printf("sock bytes: %i\n", sock_nbytes);
+        for (i = 0; i < 3000; i++) {
+            // dm7820_status =
+            //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, (i%8192) | 0x2000);
+            // dm7820_status =
+            //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, (i%8192) | 0x4000);
+            // dm7820_status =
+            //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, (i%255 | 0x6000));
+            // if (dm7820_status < 0) {
+            //     loop_switch = 0;
+            //     break;
+            // }
 
-            if (sock_nbytes > 0) {
-                // printf("sock bytes: %i\n", sock_nbytes);
-                // printf("Num photons: %u\n", packet_buf[0]);
-                // printf("Packet Count: %u\n", packet_buf[1]);
-                // printf("got packet from: %s\n\n", inet_ntop(from_addr.ss_family, 
-                                                            // &(((struct sockaddr_in*)((struct sockaddr *)&from_addr))->sin_addr), 
-                                                            // s, 
-                                                            // sizeof(s)));
-
-                if ((packet_counter + 1) != packet_buf[1]) {
-                    printf("PACKET COUNTER MISMATCH! \n");
-                    printf("pc+1: %u\n", (packet_counter + 1));
-                    printf("pack: %u\n", (packet_buf[1]));
-                    pkt_mismatch_cnt++;
-                }
-                packet_counter = packet_buf[1];
-
-                if (packet_buf[0] > 0) {
-                    /* Save to disk! */
-                    save_packet(pbufptr);
-                    num_photons = packet_buf[0];
-                    //printf("num photons %u\n", num_photons);
-                    for (i = 3; i < 3*(num_photons + 1); i += 3) {
-                        //printf("X, Y: %u, %u\n", packet_buf[i] >> 1 , packet_buf[i+1] >> 1);
-                        //printf("PHD: %u\n", packet_buf[i+2]);
-
-                        dm7820_status =
-                            DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, ((packet_buf[i] >> 1) | 0x2000));
-                        dm7820_status =
-                            DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, ((packet_buf[i+1] >> 1) | 0x4000));
-                        dm7820_status =
-                            DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, ((packet_buf[i+2]) | 0x6000));
-                        
-                    }
-                    /* buffer with a 0 */
-                    dm7820_status =
-                        DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, 0x0000);
-                    //memset(packet_buf, 0, sizeof(uint16_t)*735);
-                }
-            } else {
-                //perror("recvfrom: ");
+            switch(i%3) {
+            case 0:
+                dma_buf[i] = (i%8192 | 0x2000);
+                break;
+            case 1:
+                dma_buf[i] = (i%8192 | 0x4000);
+                break;
+            case 2:
+                dma_buf[i] = (i%255 | 0x6000);
                 break;
             }
+                
         }
+        dma_buf[i] = 0x0000;
+        dma_buf[i+1] = 0x0000;
+        /* buffer with a 0 */
+        // dm7820_status =
+        //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, 0x0000);
         
+        dm7820_status = DM7820_FIFO_DMA_Write(output_board,
+                                              DM7820_FIFO_QUEUE_0,
+                                              dma_buf, 1);
 
-
-        usleep(10);
+        dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
+                                               DM7820_FIFO_QUEUE_0, 0xFF, 0xFF);
+        //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Enable()");
+    
+        j++;
+        if (j > 100) {
+            loop_switch = 0;
+        }
+        usleep(1000);
     }
+
+    //usleep(100000);
+    sleep(1);
 
     /* Disable DMA on FIFO 0 */
     dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
@@ -288,8 +282,8 @@ int main(void) {
         return -1;
     }
 
-    /* Close the socket! */
-    close(sock_fd);
+    // /* Close the socket! */
+    // close(sock_fd);
 
     printf("Good close\n");
     printf("Total packet mismatch: %u\n", pkt_mismatch_cnt);
