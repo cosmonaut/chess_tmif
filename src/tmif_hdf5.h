@@ -21,9 +21,10 @@ typedef struct {
     int64_t timestamp_s;
     int64_t timestamp_us;
 } chess_word_packet_t;
-   
 
+
+int init_packet_save(void);
+int close_packet_save(void);
 int save_packet(uint16_t *);
-
 
 #endif /* TMIF_HDF5_H_ */
