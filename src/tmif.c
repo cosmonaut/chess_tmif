@@ -14,6 +14,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <sys/time.h>
+
 
 #include "tmif_hdf5.h"
 
@@ -28,6 +30,13 @@
 /* Number of 16-bit samples in the DMA buffer */
 #define DMA_NSAMPLES ( DMA_USR_BUF_SIZE / 2 )
 
+/* P2.0 Heartbeat
+   P2.1 FIFO Full
+   P2.2 IDAN Error */
+#define TMIF_STATUS_HEART 0x0001
+#define TMIF_STATUS_FIFO_FULL 0x0002
+#define TMIF_STATUS_ERR 0x0004
+
 #define DM7820_Return_Status(status, string) \
   if (status != 0) { printf("ERROR: DM7820 %s FAILED", string); }
 
@@ -36,12 +45,19 @@ int init_output_ports(DM7820_Board_Descriptor *);
 int init_output_fifo(DM7820_Board_Descriptor *);
 int init_output_dma(DM7820_Board_Descriptor *);
 void clear_fifo_flags(DM7820_Board_Descriptor *);
-
+int set_status_bit(DM7820_Board_Descriptor *, int, int, uint16_t *);
 
 /* global loop control */
 static volatile sig_atomic_t loop_switch = 1;
 static volatile uint8_t dma_flag = 0;
 //static volatile uint8_t fifo_full_flag = 0;
+/* global health bit */
+static volatile uint8_t g_health_bit = 0;
+
+static void health_handler(int sig) {
+    /* flip health bit */
+    g_health_bit = (g_health_bit + 1)%2;
+}
 
 static void signal_handler(int sig) {
     switch(sig) {
@@ -136,8 +152,14 @@ int main(void) {
     uint16_t *psaveptr = psave_buf;
     uint16_t pbuf_ind = 0;
 
+    /* health */
+    uint8_t l_health_bit = 0;
+    uint16_t status_bits = 0x0000;
+
     /* Signals */
     struct sigaction sa_quit;
+    struct sigaction sa_health;
+    struct itimerval health_timer;
 
     /* tmif */
     uint32_t tot_pkt_count = 0;
@@ -304,6 +326,20 @@ int main(void) {
     /* Zero out the DMA buffer, don't want spurious words! */
     memset(dma_buf, 0, DMA_USR_BUF_SIZE);
 
+    /* health status... */
+    memset(&sa_health, 0, sizeof(sa_health));
+    sa_health.sa_handler = &health_handler;
+    sigaction(SIGALRM, &sa_health, NULL);
+
+    health_timer.it_value.tv_sec = 0;
+    health_timer.it_value.tv_usec = 500000;
+
+    /* repeat half second intervals */ 
+    health_timer.it_interval.tv_sec = 0; 
+    health_timer.it_interval.tv_usec = 500000; 
+    /* Start the health timer in "real" time */
+    setitimer(ITIMER_REAL, &health_timer, NULL); 
+
     /* Allow graceful quit with various signals */
     memset(&sa_quit, 0, sizeof(sa_quit));
     sa_quit.sa_handler = &signal_handler;
@@ -323,6 +359,14 @@ int main(void) {
     /* this is the magic. */
     while(loop_switch) {
     
+        /* Health status bit stuff */
+        if (l_health_bit != g_health_bit) {
+            /* set status bit*/
+            set_status_bit(output_board, 1, l_health_bit, &status_bits);
+            l_health_bit = (l_health_bit + 1)%2;
+            printf("flippity flop\n");
+        }
+
         while(1) {
             // sock_nbytes = recvfrom(sock_fd, 
             //                        packet_buf, 
@@ -548,6 +592,21 @@ int init_output_ports(DM7820_Board_Descriptor *board) {
         return -1;
     }
 
+    /* Set all used port 2 lines as stdio output */
+    dm7820_status =
+        DM7820_StdIO_Set_IO_Mode(board, DM7820_STDIO_PORT_2, 0x0007,
+                                 DM7820_STDIO_MODE_OUTPUT);
+    if (dm7820_status < 0) {
+        return -1;
+    }
+
+    /* Set all lines low */
+    dm7820_status =
+        DM7820_StdIO_Set_Output(board, DM7820_STDIO_PORT_2, 0x0000);
+    if (dm7820_status < 0) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -639,4 +698,43 @@ void clear_fifo_flags(DM7820_Board_Descriptor *board) {
     //fprintf(stdout, "Clearing FIFO 0 status underflow flag ...\n");
     get_fifo_status(board, DM7820_FIFO_QUEUE_0,
                     DM7820_FIFO_STATUS_UNDERFLOW, &fifo_status);
+}
+
+int set_status_bit(DM7820_Board_Descriptor *board, int status_bit, int status, uint16_t *status_word) {
+    DM7820_Error dm7820_status;
+
+    switch(status_bit) {
+    case 1:
+        if (status) {
+            (*status_word) |= TMIF_STATUS_HEART;
+        } else {
+            (*status_word) &= ~TMIF_STATUS_HEART;
+        }
+        break;
+    case 2:
+        if (status) {
+            (*status_word) |= TMIF_STATUS_FIFO_FULL;
+        } else {
+            (*status_word) &= ~TMIF_STATUS_FIFO_FULL;
+        }
+        break;
+    case 3:
+        if (status) {
+            (*status_word) |= TMIF_STATUS_ERR;
+        } else {
+            (*status_word) &= ~TMIF_STATUS_ERR;
+        }
+        break;
+    default:
+        //syslog(LOG_WARNING, "set_status_bit: invalid bit set attempt: %i", status_bit)
+        printf("set_status_bit: invalid bit set attempt: %i", status_bit);
+        return(-1);
+        break;
+    }
+
+    
+    dm7820_status = DM7820_StdIO_Set_Output(board, DM7820_STDIO_PORT_2, *status_word);
+    DM7820_Return_Status(dm7820_status, "DM7820_StdIO_Set_Output()");
+
+    return(0);
 }
