@@ -23,6 +23,9 @@
 /* Number of 16-bit samples in the DMA buffer */
 #define DMA_NSAMPLES ( DMA_USR_BUF_SIZE / 2 )
 
+#define DM7820_Return_Status(status,string) \
+  if (status != 0) { printf("ERROR: DM7820 %s FAILED", string); }
+
 
 int init_output_ports(DM7820_Board_Descriptor *);
 int init_output_fifo(DM7820_Board_Descriptor *);
@@ -51,6 +54,34 @@ static void signal_handler(int sig) {
     default:
         //syslog(LOG_WARNING, "Caught signal (%d) %s", strsignal(sig));
         loop_switch = 0;
+        break;
+    }
+}
+
+static void ISR(dm7820_interrupt_info interrupt_status)
+{
+    /* If this ISR is called that means an input DMA transfer has completed. */
+    
+    DM7820_Return_Status(interrupt_status.error, "ISR Failed\n");
+    
+    switch (interrupt_status.source) {
+    case DM7820_INTERRUPT_FIFO_0_DMA_DONE:
+        // dma0 = 1;
+        // if (dma0 && dma1) {
+        //     interrupts++;
+        //     dma0 = 0;
+        //     dma1 = 0;
+        // }
+        break;
+    case DM7820_INTERRUPT_FIFO_1_DMA_DONE:
+        // dma1 = 1;
+        // if (dma0 && dma1) {
+        //     interrupts++;
+        //     dma0 = 0;
+        //     dma1 = 0;
+        // }
+        break;
+    default:
         break;
     }
 }
@@ -98,6 +129,8 @@ int main(void) {
     uint32_t pkt_mismatch_cnt = 0;
 
     uint32_t j = 0;
+
+    uint32_t dma_i = 0;
 
     printf("Hello!\n");
 
@@ -154,6 +187,13 @@ int main(void) {
     if (dm7820_status < 0) {
         printf("Failed to set up DMA \n");
     }
+
+    dm7820_status = DM7820_General_InstallISR(output_board, ISR);
+    DM7820_Return_Status(dm7820_status, "DM7820_General_InstallISR()");
+    
+    printf("Setting ISR priority ...\n");
+    dm7820_status = DM7820_General_SetISRPriority(output_board, 99);
+    DM7820_Return_Status(dm7820_status, "DM7820_General_SetISRPriority()");
     
     /* Enable FIFO 0 */
     dm7820_status = DM7820_FIFO_Enable(output_board, DM7820_FIFO_QUEUE_0, 0xFF);
@@ -206,7 +246,7 @@ int main(void) {
     /* this is the magic. */
     while(loop_switch) {
     
-        for (i = 0; i < 3000; i++) {
+        for (i = 0; i < 900; i++) {
             // dm7820_status =
             //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, (i%8192) | 0x2000);
             // dm7820_status =
@@ -218,42 +258,74 @@ int main(void) {
             //     break;
             // }
 
+            // switch(i%3) {
+            // case 0:
+            //     dma_buf[i] = (i%8192 | 0x2000);
+            //     break;
+            // case 1:
+            //     dma_buf[i] = (i%8192 | 0x4000);
+            //     break;
+            // case 2:
+            //     dma_buf[i] = (i%255 | 0x6000);
+            //     break;
+            // }
+
             switch(i%3) {
             case 0:
-                dma_buf[i] = (i%8192 | 0x2000);
+                dma_buf[dma_i] = (1 | 0x2000);
+                dma_i++;
                 break;
             case 1:
-                dma_buf[i] = (i%8192 | 0x4000);
+                dma_buf[dma_i] = (1 | 0x4000);
+                dma_i++;
                 break;
             case 2:
-                dma_buf[i] = (i%255 | 0x6000);
+                dma_buf[dma_i] = (1 | 0x6000);
+                dma_i++;
                 break;
             }
+
                 
         }
-        dma_buf[i] = 0x0000;
-        dma_buf[i+1] = 0x0000;
+
+        //dma_buf[i+1] = 0x0000;
         /* buffer with a 0 */
         // dm7820_status =
         //     DM7820_FIFO_Write(output_board, DM7820_FIFO_QUEUE_0, 0x0000);
         
-        dm7820_status = DM7820_FIFO_DMA_Write(output_board,
-                                              DM7820_FIFO_QUEUE_0,
-                                              dma_buf, 1);
+        if (j%3 == 0) {
+            dma_buf[dma_i] = 0x0000;
+            dma_i++;
+            //printf("dma_i: %i\n", dma_i);
 
-        dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
-                                               DM7820_FIFO_QUEUE_0, 0xFF, 0xFF);
-        //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Enable()");
+            dm7820_status = DM7820_FIFO_DMA_Write(output_board,
+                                                  DM7820_FIFO_QUEUE_0,
+                                                  dma_buf, 1);
+            if (dm7820_status > 0) {
+                printf("error with DMA write\n");
+            }
+
+            dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
+                                                   DM7820_FIFO_QUEUE_0, 0xFF, 0xFF);
+            //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Enable()");
+            if (dm7820_status > 0) {
+                printf("error with DMA enable\n");
+            }
+
+            dma_i = 0;
+            memset(dma_buf, 0, sizeof(uint16_t)*(3000 + 1));
+        }
     
         j++;
-        if (j > 100) {
+        if (j > 99999) {
             loop_switch = 0;
         }
         usleep(1000);
     }
 
+
     //usleep(100000);
-    sleep(1);
+    sleep(5);
 
     /* Disable DMA on FIFO 0 */
     dm7820_status = DM7820_FIFO_DMA_Enable(output_board,

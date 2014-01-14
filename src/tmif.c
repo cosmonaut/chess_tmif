@@ -1,5 +1,7 @@
 /* Author: Nicholas Nell
    email: nicholas.nell@colorado.edu
+
+   CHESS Telemetry Interface.
 */
 
 #include <dm7820_library.h>
@@ -16,14 +18,17 @@
 #include "tmif_hdf5.h"
 
 #define CU40MMXS_PORT 60000
+#define CU40MMXS_PACKET_SIZE 1470
+/* DMA buffer size in bytes */
 #define DMA_BUF_SIZE 1470
+/* Number of DMA buffers */
 #define DMA_BUF_NUM 16
-/* Size of total DMA buffer in bytes */
+/* Size of complete DMA buffer in bytes */
 #define DMA_USR_BUF_SIZE (DMA_BUF_SIZE * DMA_BUF_NUM)
 /* Number of 16-bit samples in the DMA buffer */
 #define DMA_NSAMPLES ( DMA_USR_BUF_SIZE / 2 )
 
-#define DM7820_Return_Status(status,string) \
+#define DM7820_Return_Status(status, string) \
   if (status != 0) { printf("ERROR: DM7820 %s FAILED", string); }
 
 
@@ -35,6 +40,8 @@ void clear_fifo_flags(DM7820_Board_Descriptor *);
 
 /* global loop control */
 static volatile sig_atomic_t loop_switch = 1;
+static volatile uint8_t dma_flag = 0;
+//static volatile uint8_t fifo_full_flag = 0;
 
 static void signal_handler(int sig) {
     switch(sig) {
@@ -58,30 +65,20 @@ static void signal_handler(int sig) {
 }
 
 
-static void ISR(dm7820_interrupt_info interrupt_status)
-{
+static void ISR(dm7820_interrupt_info interrupt_status) {
     /* If this ISR is called that means an input DMA transfer has completed. */
     
     DM7820_Return_Status(interrupt_status.error, "ISR Failed\n");
     
     switch (interrupt_status.source) {
     case DM7820_INTERRUPT_FIFO_0_DMA_DONE:
-        // dma0 = 1;
-        // if (dma0 && dma1) {
-        //     interrupts++;
-        //     dma0 = 0;
-        //     dma1 = 0;
-        // }
+        /* flag number of dma writes */
+        dma_flag++;
         break;
     case DM7820_INTERRUPT_FIFO_1_DMA_DONE:
-        // dma1 = 1;
-        // if (dma0 && dma1) {
-        //     interrupts++;
-        //     dma0 = 0;
-        //     dma1 = 0;
-        // }
         break;
     case DM7820_INTERRUPT_FIFO_0_FULL:
+        //fifo_full_flag = 1;
         //printf("FIFO 0 FULL!\n");
         break;
     case DM7820_INTERRUPT_FIFO_0_EMPTY:
@@ -132,8 +129,12 @@ int main(void) {
 
     /* buffers */
     uint16_t packet_buf[735];
+    uint16_t psave_buf[735*10];
+    //uint16_t 
     //char s[100];
     uint16_t *pbufptr = packet_buf;
+    uint16_t *psaveptr = psave_buf;
+    uint16_t pbuf_ind = 0;
 
     /* Signals */
     struct sigaction sa_quit;
@@ -142,45 +143,21 @@ int main(void) {
     uint32_t tot_pkt_count = 0;
     uint16_t packet_counter = 0;
     uint16_t packet_counter_s = 0;
+    uint16_t packet_counter_h5 = 0;
     int i = 0;
     uint16_t num_photons = 0;
     uint32_t pkt_mismatch_cnt = 0;
-    uint32_t missed_pkts = 0;
+    /* Generic status checker! */
     int status = 0;
 
-    /* stack, priority */
-    struct rlimit r_stack;
-    const rlim_t tmif_stack = 16777216;
+    /* priority */
     id_t pid;
 
 
     printf("Hello!\n");
     memset(packet_buf, 0, sizeof(uint16_t)*735);
 
-    /* Change stack limit -- maybe this will help? */
-    status = getrlimit(RLIMIT_STACK, &r_stack);
-    if (status == 0) {
-        printf("STACK: %d %d\n", (uint32_t)r_stack.rlim_cur, (uint32_t)r_stack.rlim_max);
-    } else {
-        printf("getrlimit failure! %d\n", status);
-    }
-
-    r_stack.rlim_cur = tmif_stack;
-    status = setrlimit(RLIMIT_STACK, &r_stack);
-    if (status == 0) {
-        printf("Set new stack limit\n");
-    } else {
-        printf("Set stack lim failed... %d\n", status);
-    }
-
-    status = getrlimit(RLIMIT_STACK, &r_stack);
-    if (status == 0) {
-        printf("NEW STACK: %d %d\n", (uint32_t)r_stack.rlim_cur, (uint32_t)r_stack.rlim_max);
-    } else {
-        printf("getrlimit failure! %d\n", status);
-    }
-
-    /* Set high priority */
+    /* Set highest priority */
     pid = getpid();
     status = setpriority(PRIO_PROCESS, pid, -20);
     if (status != 0) {
@@ -324,7 +301,8 @@ int main(void) {
         printf("Failed to create DMA buffer \n");
         perror("DMA BUF: ");
     }
-    //memset(dma_buf, 0, DMA_USR_BUF_SIZE);
+    /* Zero out the DMA buffer, don't want spurious words! */
+    memset(dma_buf, 0, DMA_USR_BUF_SIZE);
 
     /* Allow graceful quit with various signals */
     memset(&sa_quit, 0, sizeof(sa_quit));
@@ -346,15 +324,23 @@ int main(void) {
     while(loop_switch) {
     
         while(1) {
+            // sock_nbytes = recvfrom(sock_fd, 
+            //                        packet_buf, 
+            //                        sizeof(packet_buf), 
+            //                        0, 
+            //                        (struct sockaddr *)&from_addr, 
+            //                        &addr_len);
+
             sock_nbytes = recvfrom(sock_fd, 
                                    packet_buf, 
-                                   sizeof(packet_buf), 
+                                   CU40MMXS_PACKET_SIZE, 
                                    0, 
                                    (struct sockaddr *)&from_addr, 
                                    &addr_len);
+
 	    //printf("sock bytes: %i\n", sock_nbytes);
 
-            if (sock_nbytes > 0) {
+            if (sock_nbytes == 1470) {
                 // printf("sock bytes: %i\n", sock_nbytes);
                 // printf("Num photons: %u\n", packet_buf[0]);
                 // printf("Packet Count: %u\n", packet_buf[1]);
@@ -362,49 +348,89 @@ int main(void) {
                                                             // &(((struct sockaddr_in*)((struct sockaddr *)&from_addr))->sin_addr), 
                                                             // s, 
                                                             // sizeof(s)));
-
+                /* Check for packet loss */
                 if ((packet_counter + 1) != packet_buf[1]) {
                     // printf("PACKET COUNTER MISMATCH! \n");
                     // printf("pc+1: %u\n", (packet_counter + 1));
                     // printf("pack: %u\n", (packet_buf[1]));
                     pkt_mismatch_cnt++;
-                    missed_pkts += (packet_buf[1] - (packet_counter + 1));
                 }
                 tot_pkt_count++;
                 packet_counter = packet_buf[1];
 
-                if (packet_buf[0] > 0) {
-                    /* Save to disk! */
-                    save_packet(pbufptr);
-                    num_photons = packet_buf[0];
-                    //printf("num photons %u\n", num_photons);
+
+                /* If enough packets have been read, save what we have */
+                if (((uint16_t)(packet_counter - packet_counter_h5)) >= 10) {
+                    //if (pbuf_ind >= 7350) {
+                    //printf("About to save packets %d...\n", pbuf_ind);
+                    //status = save_packets(pbufptr, 10);
+                    status = save_packets(psaveptr, pbuf_ind);
+                    if (status != 0) {
+                        printf("save_packets() failed! %d\n", status);
+                    }
+                    /* Reset packet buffer index */
+                    pbuf_ind = 0;
+                    memset(psave_buf, 0, sizeof(psave_buf));
+                    packet_counter_h5 = packet_counter;
+                }
+
+                /* If there are photons in the packet do work. */
+                num_photons = packet_buf[0];
+                if (num_photons > 0) {
+                    /* Save packet if there are any photons in it */
+                    status = (int)memcpy(&psave_buf[pbuf_ind*735], &packet_buf, CU40MMXS_PACKET_SIZE);
+                    if (status) {
+                        //pbuf_ind += 735;
+                        pbuf_ind += 1;
+                    } else {
+                        /* eek */
+                        printf("failed to copy memory to packet save buffer\n");
+                    }
+
+                    /* OLD Save to disk! */
+                    //save_packet(pbufptr);
+
                     for (i = 3; i < 3*(num_photons + 1); i += 3) {
                         //printf("X, Y: %u, %u\n", packet_buf[i] >> 1 , packet_buf[i+1] >> 1);
                         //printf("PHD: %u\n", packet_buf[i+2]);
 
-                        dma_buf[dma_i] = ((packet_buf[i] >> 1) | 0x2000);
-                        dma_i++;
-                        dma_buf[dma_i] = ((packet_buf[i+1] >> 1) | 0x4000);
-                        dma_i++;
-                        dma_buf[dma_i] = ((packet_buf[i+2]) | 0x6000);
-                        dma_i++;
+                        if (dma_i < (DMA_NSAMPLES - 100)) {
+                            dma_buf[dma_i] = ((packet_buf[i] >> 1) | 0x2000);
+                            dma_i++;
+                            dma_buf[dma_i] = ((packet_buf[i+1] >> 1) | 0x4000);
+                            dma_i++;
+                            dma_buf[dma_i] = ((packet_buf[i+2]) | 0x6000);
+                            dma_i++;
+                        } else {
+                            printf("dma index too large: %d\n", dma_i);
+                        }
                     }
                 }
                 
-                if ((packet_counter - packet_counter_s) > 3) {
+                /* Write DMA after 3 packets have been processed */
+                //if ((packet_counter - packet_counter_s) > 2) {
+                if (((uint16_t)(packet_counter - packet_counter_s)) > 2) {
+
                     if (dma_i > 1) {
                         /* Buffer it all with a 0 */
                         dma_buf[dma_i] = 0x0000;
                         dma_i++;
 
-                        // for (i = 0; i < (dma_i + 1); i++) {
-                        //     printf("word: %02X\n", dma_buf[i]);
-                        // }
-
+                        /* for (i = 0; i < (dma_i + 1); i++) { */
+			/*     //printf("word: %02X\n", dma_buf[i]); */
+			/*   printf("word: %u %u \n", ((dma_buf[i] & 0xe000) >> 12), dma_buf[i] & 0x1fff); */
+                        /* } */
+                        
+                        /* Calculate number of buffers used */
                         dma_chk = 1 + ((dma_i - 1)/735);
+                        if (dma_chk > 16) {
+                            printf("ERROR, DMA_CHK: %d\n", dma_chk);
+                        }
 
                         //printf("dma_chk: %i\n", dma_chk);
-                        // printf("dma_i %i\n", dma_i);
+                        //printf("dma_i %i\n", dma_i);
+
+                        /* Make sure fifo isn't full... */
                         get_fifo_status(output_board, DM7820_FIFO_QUEUE_0,
                                         DM7820_FIFO_STATUS_FULL,
                                         &fifo_status);
@@ -420,13 +446,23 @@ int main(void) {
                                 dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
                                                                        DM7820_FIFO_QUEUE_0, 0xFF, 0xFF);
                                 DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Enable()");
+
+                                /* Wait for DMA to write out */
+                                if (dm7820_status == 0) {
+                                    while(dma_flag != dma_chk) {
+                                        usleep(5);
+                                    }
+                                    dma_flag = 0;
+                                } else {
+                                    printf("DMA start/enable failed!\n");
+                                }
+
                             } else {
                                 printf("Didn't start xfer due to dma write failure \n");
                             }
 
                             /* Clear all data that's been shipped
-                               off. This isn't necessary but doesn't
-                               seem to hur performance .*/
+                               off. .*/
                             memset(dma_buf, 0, sizeof(uint16_t)*(dma_i + 1));
                             dma_i = 0;
                         } else {
@@ -437,7 +473,9 @@ int main(void) {
                     packet_counter_s = packet_counter;
                 }
             } else {
-                //perror("recvfrom: ");
+                /* recvfrom returns negative values due to
+                   non-blocking status. This just means there were no
+                   packets to read! */
                 break;
             }
         }
@@ -445,10 +483,12 @@ int main(void) {
         usleep(5);
     }
 
-    status = close_packet_save();
-    if (dm7820_status != 0) {
-        printf("close packet save fail\n");
-    }
+    printf("Exited main loop \n");
+
+    //status = close_packet_save();
+    // if (status != 0) {
+    //     printf("close packet save fail\n");
+    // }
 
     /* Disable DMA on FIFO 0 */
     dm7820_status = DM7820_FIFO_DMA_Enable(output_board,
@@ -478,12 +518,13 @@ int main(void) {
     }
 
     /* Close the socket! */
-    close(sock_fd);
+    status = close(sock_fd);
+    if (status < 0) {
+        printf("error closing socket: %d\n", status);
+    }
 
-    printf("Good close\n");
     printf("Total packet mismatch: %u\n", pkt_mismatch_cnt);
     printf("Total # of packets: %u\n", tot_pkt_count);
-    printf("Missed packets: %u\n", missed_pkts);
 
     return 0;
 }
@@ -515,29 +556,32 @@ int init_output_fifo(DM7820_Board_Descriptor *board) {
 
     /* Init Output FIFO */
 
-    /* FIFO 0 */
     /* Disable FIFO 0 */
     dm7820_status = DM7820_FIFO_Enable(board, DM7820_FIFO_QUEUE_0, 0x00);
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_Enable()");
     
     /* Set FIFO input clock to PCI write */
     dm7820_status = DM7820_FIFO_Set_Input_Clock(board,
                                                 DM7820_FIFO_QUEUE_0,
                                                 DM7820_FIFO_INPUT_CLOCK_PCI_WRITE);
-    
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_Set_Input_Clock()");
     
     /* Set FIFO 0 output clock to strobe 2 (NSROC strobe) */
     dm7820_status = DM7820_FIFO_Set_Output_Clock(board,
                                                  DM7820_FIFO_QUEUE_0,
                                                  DM7820_FIFO_OUTPUT_CLOCK_STROBE_2);
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_Set_Output_Clock()");
 
     /* Set FIFO 0 data input to PCI data */
     dm7820_status = DM7820_FIFO_Set_Data_Input(board,
                                                DM7820_FIFO_QUEUE_0,
                                                DM7820_FIFO_0_DATA_INPUT_PCI_DATA);
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_Set_Data_Input()");
 
     dm7820_status = DM7820_FIFO_Set_DMA_Request(board,
                                                 DM7820_FIFO_QUEUE_0,
                                                 DM7820_FIFO_DMA_REQUEST_WRITE);
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_Set_DMA_Request()");
 
     /* Set the FIFO 0 output to port 0 */
     /* The mask is 0xFFFF for a full 16 bit word */
@@ -545,7 +589,8 @@ int init_output_fifo(DM7820_Board_Descriptor *board) {
                                                  DM7820_STDIO_PORT_0,
                                                  0xFFFF,
                                                  DM7820_STDIO_PERIPH_FIFO_0);
-    
+    DM7820_Return_Status(dm7820_status, "DM7820_StdIO_Set_Periph_Mode()");
+
     return 0;
 }
 
@@ -557,7 +602,7 @@ int init_output_dma(DM7820_Board_Descriptor *board) {
     dm7820_status = DM7820_FIFO_DMA_Initialize(board,
                                                DM7820_FIFO_QUEUE_0,
                                                DMA_BUF_NUM, DMA_BUF_SIZE);
-    //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Initialize()");
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Initialize()");
 
     /*  Configuring DMA 0 */
     //syslog(LOG_INFO, "    Configuring DMA 0 ...");
@@ -565,7 +610,7 @@ int init_output_dma(DM7820_Board_Descriptor *board) {
                                               DM7820_FIFO_QUEUE_0,
                                               DM7820_DMA_DEMAND_ON_PCI_TO_DM7820,
                                               DMA_BUF_SIZE);
-    //DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Configure()");
+    DM7820_Return_Status(dm7820_status, "DM7820_FIFO_DMA_Configure()");
 
     return 0;
 }

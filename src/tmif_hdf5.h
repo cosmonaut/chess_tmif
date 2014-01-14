@@ -26,5 +26,6 @@ typedef struct {
 int init_packet_save(void);
 int close_packet_save(void);
 int save_packet(uint16_t *);
+int save_packets(uint16_t *, uint8_t);
 
 #endif /* TMIF_HDF5_H_ */
