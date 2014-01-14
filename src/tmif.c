@@ -364,7 +364,6 @@ int main(void) {
             /* set status bit*/
             set_status_bit(output_board, 1, l_health_bit, &status_bits);
             l_health_bit = (l_health_bit + 1)%2;
-            printf("flippity flop\n");
         }
 
         while(1) {
