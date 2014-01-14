@@ -479,6 +479,9 @@ int main(void) {
                                         DM7820_FIFO_STATUS_FULL,
                                         &fifo_status);
                         if (!fifo_status) {
+                            /* Set fifo full status bit low */
+                            set_status_bit(output_board, 2, 0, &status_bits);
+
                             /* DMA write to output FIFOs */
                             dm7820_status = DM7820_FIFO_DMA_Write(output_board,
                                                                   DM7820_FIFO_QUEUE_0,
@@ -510,6 +513,8 @@ int main(void) {
                             memset(dma_buf, 0, sizeof(uint16_t)*(dma_i + 1));
                             dma_i = 0;
                         } else {
+                            /* Set fifo full status */
+                            set_status_bit(output_board, 2, 1, &status_bits);
                             printf("FIFO FULL!\n");
                         }
 
